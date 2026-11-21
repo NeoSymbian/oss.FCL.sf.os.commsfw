@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0 (changed by the NeoSymbian Authors)
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): a provider's bind activity re-checks a data client by id before each send (SMP)
 // Description:
 // COREPRSTATES.CPP
 // Core PR States
@@ -763,6 +763,13 @@ EXPORT_C void TSendBindTo::DoL()
 
 	//TODO: TNodePeerId should become internal. When this happens, FirstOriginator should return
 	//      RNodeInterface.
+	if (iContext.iNodeActivity->ActivitySigId() == ECFActivityNoBearer &&
+		(iContext.iNodeActivity->Error() != KErrNone ||
+		 (iContext.iNodeActivity->SoleOriginator().Flags() & TClientType::ELeaving)))
+		{
+		iContext.iNodeActivity->SetIdle();
+		return;
+		}
 	iContext.iNodeActivity->PostRequestTo(
 		iContext.iNodeActivity->SoleOriginator().Peer(),
 		TCFDataClient::TBindTo(binderResponse.iNodeId).CRef());

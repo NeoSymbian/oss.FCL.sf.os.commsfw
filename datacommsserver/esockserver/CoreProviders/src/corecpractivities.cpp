@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0 (changed by the NeoSymbian Authors)
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): a provider's bind activity re-checks a data client by id before each send (SMP)
 // Description:
 // Core CPR Activities
 // THIS API IS INTERNAL TO NETWORKING AND IS SUBJECT TO CHANGE AND NOT FOR EXTERNAL USE
@@ -145,7 +145,7 @@ DECLARE_DEFINE_CUSTOM_NODEACTIVITY(ECFActivityBindTo, CprBindTo, TCFDataClient::
 	    //we will [KNoTag] or will not [KNoBearer] need to request a binder for the dataclient.
 
 		  //{SERVICE PROVIDER PRESENT
-			NODEACTIVITY_ENTRY(KNoTag, CCprBindToActivity::TRequestCommsBinder, TAcceptErrorState<CoreNetStates::TAwaitingBinderResponse>, TErrorTagOr<TTag<KBearerReady> >)
+			NODEACTIVITY_ENTRY(KNoTag, CCprBindToActivity::TRequestCommsBinder, TAcceptErrorState<CoreNetStates::TAwaitingBinderResponse>, TErrorTagOr<CCprBindToActivity::TCheckBinderClient>)
 	      //}
 		NODEACTIVITY_ENTRY(KBearerReady, CCprBindToActivity::TSendBindTo, CCprBindToActivity::TAwaitingBindToCompleteOrError,
 																					 TErrorTagOr<TTag<KDataClientReady | NetStateMachine::EBackward> >)

@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0 (changed by the NeoSymbian Authors)
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): a provider's bind activity re-checks a data client by id before each send (SMP)
 // Description:
 // COREPRACTIVITIES.CPP
 // Core PR Activities
@@ -254,7 +254,7 @@ DECLARE_DEFINE_CUSTOM_NODEACTIVITY(ECFActivityBindTo, PRBindTo, TCFDataClient::T
 	    //we will [KNoTag] or will not [KNoBearer] need to request a binder for the dataclient.
 
 		  //{SERVICE PROVIDER PRESENT
-			NODEACTIVITY_ENTRY(KNoTag, CBindToActivity::TRequestCommsBinder, TAcceptErrorState<CoreNetStates::TAwaitingBinderResponse>, TErrorTagOr<TTag<KBearerReady> >)
+			NODEACTIVITY_ENTRY(KNoTag, CBindToActivity::TRequestCommsBinder, TAcceptErrorState<CoreNetStates::TAwaitingBinderResponse>, TErrorTagOr<CBindToActivity::TCheckBinderClient>)
 	      //}
 		NODEACTIVITY_ENTRY(KBearerReady, PRActivities::CBindToActivity::TSendBindTo, CBindToActivity::TAwaitingBindToCompleteOrError,
 																					 TErrorTagOr<TTag<KDataClientReady | NetStateMachine::EBackward> >)
@@ -1092,12 +1092,20 @@ Messages::RNodeInterface* CBindToActivity::NextDataClient()
 	TClientIter<TDefaultClientMatchPolicy> iter = iNode.GetClientIter<TDefaultClientMatchPolicy>(
 												/*include*/TClientType(TCFClientType::EData),
 												/*exclude*/TClientType(0, TCFClientType::ELeaving | TCFClientType::EConfigAccessPoint));
-    iCurrentDataClient = iter++;
-    while (iCurrentDataClient && (iSuccessfulDataClients.Find(iCurrentDataClient) != KErrNotFound))
-    	{
-        iCurrentDataClient = iter++;
-        };
-    return iCurrentDataClient;
+	RNodeInterface* peer;
+	while ((peer = iter++) != NULL)
+		{
+		TInt i = iSuccessfulDataClients.Count();
+		while (i && iSuccessfulDataClients[i - 1].iId != peer->RecipientId())
+			--i;
+		if (i == 0)
+			{
+			iCurrentDataClient = peer->RecipientId();
+			return peer;
+			}
+		}
+	iCurrentDataClient.SetNull();
+	return NULL;
 	}
 
 TBool CBindToActivity::DataClientsAutocommit()
@@ -1108,20 +1116,6 @@ TBool CBindToActivity::DataClientsAutocommit()
  	return nonLeavingDataClients <=1 && IsAutocommit();
  	}
 
-
-void CBindToActivity::AddClientAsSuccessfulL(Messages::RNodeInterface* aDataClient)
-	{
-	__ASSERT_DEBUG(aDataClient, User::Panic(KCorePrPanic, KPanicDataClient));
-	__ASSERT_DEBUG(iSuccessfulDataClients.Find(aDataClient) == KErrNotFound, User::Panic(KCorePrPanic, KPanicIncorrectState));
-	iSuccessfulDataClients.AppendL(aDataClient);
-	}
-
-void CBindToActivity::RemoveClientFromSuccessful(Messages::RNodeInterface* aDataClient)
-	{
-	TInt index = iSuccessfulDataClients.Find(aDataClient);
-	__ASSERT_DEBUG(index >= 0, User::Panic(KCorePrPanic, KPanicDataClient));
-	iSuccessfulDataClients.Remove(index);
-	}
 
 EXPORT_DEFINE_SMELEMENT(CBindToActivity::TSendControlClientJoinRequest, NetStateMachine::MStateTransition, CBindToActivity::TContext)
 void CBindToActivity::TSendControlClientJoinRequest::DoL()
@@ -1158,8 +1152,9 @@ TBool CBindToActivity::TAwaitingBindToCompleteOrError::Accept()
 	    }
     else if (iContext.iMessage.IsMessage<TEBase::TError>())
     	{
-	    activity.ReplyToOriginator(message_cast<TEBase::TError>(iContext.iMessage).iValue);
-    	activity.RemoveClientFromSuccessful(activity.CurrentDataClient());
+		if (activity.IsBinding())
+			activity.ReplyToOriginator(message_cast<TEBase::TError>(iContext.iMessage).iValue);
+		activity.iSuccessfulDataClients.Remove(activity.iSuccessfulDataClients.Count() - 1);
     	activity.ResetCurrentDataClient();
     	return ETrue;
     	}
@@ -1246,13 +1241,14 @@ void CBindToActivity::TSendBindTo::DoL()
 	//Provisionally stash the current dataclient as successful. If it fails to bind, we'll unstash it
 	//We're doing this now, as stashing may fail and we don't want that to be the sole reason for
 	//unrolling.
-	bindToActivity.AddClientAsSuccessfulL(bindToActivity.CurrentDataClient());
+	TBoundClient target = { bindToActivity.iCurrentDataClient, !bindToActivity.DataClientsAutocommit() };
+	bindToActivity.iSuccessfulDataClients.AppendL(target);
 
 	TCFServiceProvider::TCommsBinderResponse* commsBinderResponse = message_cast<TCFServiceProvider::TCommsBinderResponse>(&iContext.iMessage);
 	Messages::TNodeId commsBinder = commsBinderResponse ? commsBinderResponse->iNodeId : Messages::TNodeId::NullId();
 
 	bindToActivity.PostRequestTo(*bindToActivity.CurrentDataClient(),
-			TCFDataClient::TBindTo(commsBinder, !bindToActivity.DataClientsAutocommit()).CRef());
+			TCFDataClient::TBindTo(commsBinder, target.iNeedsCommit).CRef());
     }
 
 EXPORT_DEFINE_SMELEMENT(CBindToActivity::TSendBindToComplete, NetStateMachine::MStateTransition, CBindToActivity::TContext)
@@ -1359,10 +1355,13 @@ void CBindToActivity::TCommit::DoL()
 	__ASSERT_DEBUG(iContext.iNodeActivity, User::Panic(KCorePrPanic, KPanicNoActivity));
 	CBindToActivity& bindToActivity = static_cast<CBindToActivity&>(*iContext.iNodeActivity);
 
-	TInt count = bindToActivity.DataClientsAutocommit() ? 0 : bindToActivity.iSuccessfulDataClients.Count();
+	TInt count = bindToActivity.iSuccessfulDataClients.Count();
     while (count )
     	{
-    	bindToActivity.PostRequestTo(*bindToActivity.iSuccessfulDataClients[--count], TCFDataClient::TCommitBindTo().CRef());
+		const TBoundClient& target = bindToActivity.iSuccessfulDataClients[--count];
+		RNodeInterface* peer = bindToActivity.LiveDataClient(target.iId);
+		if (peer && target.iNeedsCommit)
+			bindToActivity.PostRequestTo(*peer, TCFDataClient::TCommitBindTo().CRef());
         };
     bindToActivity.iSuccessfulDataClients.Reset();
     RNodeInterface* sp = iContext.Node().ServiceProvider();
@@ -1410,7 +1409,10 @@ void CBindToActivity::TCancel::DoL()
 	TInt count = bindToActivity.iSuccessfulDataClients.Count();
     while (count )
     	{
-    	bindToActivity.PostRequestTo(*bindToActivity.iSuccessfulDataClients[--count], TEBase::TCancel().CRef());
+		const TBoundClient& target = bindToActivity.iSuccessfulDataClients[--count];
+		RNodeInterface* peer = bindToActivity.LiveDataClient(target.iId);
+		if (peer && target.iNeedsCommit)
+			bindToActivity.PostRequestTo(*peer, TEBase::TCancel().CRef());
         };
     bindToActivity.iSuccessfulDataClients.Reset();
 
@@ -1736,15 +1738,18 @@ EXPORT_C void CCommsBinderActivity::Cancel(TNodeContextBase& aContext)
 void CCommsBinderActivity::BindToComplete()
     {
     __ASSERT_DEBUG(iPendingBinder, User::Panic(KSpecAssert_ESockCrStaCPRAC, 23));
-	TUint c = iNode.CountActivities(ActivitySigId());
-    // Note: this routine can be used with parallel and non-parallel binder activities.  In the
-    // former case we start with multiple activities and eventually end up with a single one.  In
-    // the latter case we have a single activity throughout.
-	if(c == 1)
-		{
-		iPendingBinder->ClearFlags(TCFClientType::EActivating);
-		}
+	RNodeInterface* completed = iPendingBinder;
 	iPendingBinder = NULL;
+	const RPointerArray<CNodeActivityBase>& activities = iNode.Activities();
+	for (TInt i = 0; i < activities.Count(); ++i)
+		{
+		CCommsBinderActivity* other = static_cast<CCommsBinderActivity*>(
+			activities[i]->FetchExtInterface(KInterfaceId));
+		if (other && other->Binder() == completed)
+			return;
+		}
+	completed->ClearFlags(TCFClientType::EActivating);
+	static_cast<CMMCommsProviderBase&>(iNode).DestroyOrphanedDataClients();
     }
 
 //
@@ -1901,7 +1906,6 @@ EXPORT_C TBool CCommsBinderActivity::TAwaitingBindToComplete::Accept()
 	    CCommsBinderActivity* binderActivity = reinterpret_cast<CCommsBinderActivity*>(iContext.iNodeActivity->FetchExtInterface(CCommsBinderActivity::KInterfaceId));
 	    __ASSERT_DEBUG(binderActivity, User::Panic(KSpecAssert_ESockCrStaCPRAC, 30));
 	    binderActivity->BindToComplete();
-	    iContext.Node().DestroyOrphanedDataClients();
 	    return ETrue; 
 	    }
 
