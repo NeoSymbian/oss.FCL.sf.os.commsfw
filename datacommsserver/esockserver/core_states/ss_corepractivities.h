@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0 (changed by the NeoSymbian Authors)
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): a provider's bind activity re-checks a data client by id before each send (SMP)
 // Description:
 // Core PR Activities
 //
@@ -23,6 +23,7 @@
 #define SYMBIAN_SS_COREPRACTIVITIES_H
 
 #include <comms-infras/ss_coreprstates.h>
+#include <e32debug.h>
 #include <comms-infras/ss_mmnode.h>
 #include <comms-infras/ss_nodemessages_internal.h>
 #include <comms-infras/ss_nodemessages_legacy.h>
@@ -438,12 +439,30 @@ public:
     Messages::RNodeInterface* NextDataClient();
     Messages::RNodeInterface* CurrentDataClient()
 		{
-		return iCurrentDataClient;
+		return LiveDataClient(iCurrentDataClient);
 		}
+
+    class TCheckBinderClient : public MeshMachine::TTag<CoreNetStates::KBearerReady>
+        {
+    public:
+        explicit TCheckBinderClient(TContext& aContext)
+            : MeshMachine::TTag<CoreNetStates::KBearerReady>(aContext) {}
+        virtual TInt TransitionTag()
+            {
+            CBindToActivity& activity = static_cast<CBindToActivity&>(*iContext.iNodeActivity);
+            if (activity.CurrentDataClient())
+                return CoreNetStates::KBearerReady;
+            // NeoSymbian: the data client left while the lower binder was requested (SMP: ESock_IP and ESock_DIP
+            // run at once); release the binder and go on with the next client instead of binding a freed node
+            RDebug::Printf("ESock: BindTo skips a data client that left; binder released");
+            activity.ReplyToOriginator(KErrCancel);
+            return CoreNetStates::KDataClientReady | NetStateMachine::EBackward;
+            }
+        };
 
     void ResetCurrentDataClient()
        	{
-      	iCurrentDataClient = NULL;
+		iCurrentDataClient.SetNull();
        	}
 
     TBool IsAutocommit()
@@ -468,9 +487,6 @@ public:
     	return !(iFlags & EDontLeaveServiceProvider);
     	}
 
-    void AddClientAsSuccessfulL(Messages::RNodeInterface* aDataClient);
-    void RemoveClientFromSuccessful(Messages::RNodeInterface* aDataClient);
-
 protected:
 	IMPORT_C CBindToActivity(const MeshMachine::TNodeActivity& aActivitySig,  MeshMachine::AMMNodeBase& aNode, TInt aNextActivityCount);
 
@@ -479,8 +495,13 @@ protected:
 	// the client we hold a reference to.  Hence use the NodeId and lookup the corresponding RNodeInterface* as and when required.
     Messages::TNodeId iNewServiceProvider;
 private:
-	Messages::RNodeInterface* iCurrentDataClient;
-	RPointerArray<Messages::RNodeInterface> iSuccessfulDataClients;
+	Messages::RNodeInterface* LiveDataClient(const Messages::TNodeId& aId)
+		{
+		Messages::RNodeInterface* peer = iNode.FindClient(aId);
+		return peer && !(peer->Flags() & Messages::TClientType::ELeaving) ? peer : NULL;
+		}
+	Messages::TNodeId iCurrentDataClient;
+	RArray<Messages::TNodeId> iSuccessfulDataClients;	// NeoSymbian: ids, looked up before each send
 	TInt iFlags;
 
 protected:
