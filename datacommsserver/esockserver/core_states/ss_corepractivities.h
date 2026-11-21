@@ -495,18 +495,13 @@ protected:
 	// the client we hold a reference to.  Hence use the NodeId and lookup the corresponding RNodeInterface* as and when required.
     Messages::TNodeId iNewServiceProvider;
 private:
-	struct TBoundClient
-		{
-		Messages::TNodeId iId;
-		TBool iNeedsCommit;
-		};
 	Messages::RNodeInterface* LiveDataClient(const Messages::TNodeId& aId)
 		{
 		Messages::RNodeInterface* peer = iNode.FindClient(aId);
 		return peer && !(peer->Flags() & Messages::TClientType::ELeaving) ? peer : NULL;
 		}
 	Messages::TNodeId iCurrentDataClient;
-	RArray<TBoundClient> iSuccessfulDataClients;
+	RArray<Messages::TNodeId> iSuccessfulDataClients;	// NeoSymbian: ids, looked up before each send
 	TInt iFlags;
 
 protected:

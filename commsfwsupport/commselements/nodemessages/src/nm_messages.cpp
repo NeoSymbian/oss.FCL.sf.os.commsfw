@@ -59,11 +59,12 @@ EXPORT_C void TSignatureBase::DispatchL(const TRuntimeCtxId& aSender, const TRun
 	if (!node[0] || (node[0] & 3))
 		{
 		const TNodeId* from = address_cast<TNodeId>(&aSender);
+		const TNodeCtxId* ctx = address_cast<TNodeCtxId>(&aSender);	// the sender's activity, when it has one
 		const TUint* fromNode = from ? static_cast<const TUint*>(from->Ptr()) : NULL;
 		RDebug::Printf("NodeMessages: dead node %08x (salt %d, thread %d) gets message %d:%d from %08x (vptr %08x, "
-			"thread %d); node words %08x %08x %08x %08x", node, nodeId.Salt(), nodeId.Thread(), MessageId().Realm(),
-			MessageId().MessageId(), fromNode, fromNode ? fromNode[0] : 0, aSender.Thread(), node[0], node[1], node[2],
-			node[3]);
+			"thread %d, activity %04x); node words %08x %08x %08x %08x", node, nodeId.Salt(), nodeId.Thread(),
+			MessageId().Realm(), MessageId().MessageId(), fromNode, fromNode ? fromNode[0] : 0, aSender.Thread(),
+			ctx ? ctx->NodeCtx() : 0xffff, node[0], node[1], node[2], node[3]);
 		User::Panic(KMessagesPanic, EDeceasedNodePanic);
 		}
 	__ASSERT_ALWAYS(nodeId.Node().NodeId() == nodeId, User::Panic(KMessagesPanic, EDeceasedNodePanic)); //Address reuse protection (Ptr() may match something existing, but not necesserily the intended addresee).
