@@ -1743,8 +1743,9 @@ void CCommsBinderActivity::BindToComplete()
 	const RPointerArray<CNodeActivityBase>& activities = iNode.Activities();
 	for (TInt i = 0; i < activities.Count(); ++i)
 		{
-		CCommsBinderActivity* other = static_cast<CCommsBinderActivity*>(
-			activities[i]->FetchExtInterface(KInterfaceId));
+		// only the binder activities (FetchExtInterface panics on an activity whose interface table lacks it)
+		CCommsBinderActivity* other = activities[i]->ActivitySigId() == ActivitySigId() ?
+			static_cast<CCommsBinderActivity*>(activities[i]->FetchExtInterface(KInterfaceId)) : NULL;
 		if (other && other->Binder() == completed)
 			return;
 		}
