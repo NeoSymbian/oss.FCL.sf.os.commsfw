@@ -4,12 +4,12 @@
 // under the terms of "Eclipse Public License v1.0"
 // which accompanies this distribution, and is available
 // at the URL "http://www.eclipse.org/legal/epl-v10.html".
-//
+// SPDX-License-Identifier: EPL-2.0 (changed by the NeoSymbian Authors)
 // Initial Contributors:
 // Nokia Corporation - initial contribution.
 //
 // Contributors:
-//
+// The NeoSymbian Authors (2026): DispatchL names a message sent to a dead node before panicking.
 // Description:
 //
 
@@ -23,6 +23,7 @@
 #include "nm_node.h"
 #include <elements/interfacetable.h>
 #include <elements/metatype.h>
+#include <e32debug.h>
 
 
 #ifdef _DEBUG
@@ -52,6 +53,19 @@ EXPORT_C void TSignatureBase::DispatchL(const TRuntimeCtxId& aSender, const TRun
 	{
 	const TNodeId& nodeId = address_cast<TNodeId>(aRecipient); //This message type operates on nodes
 	__ASSERT_DEBUG(nodeId.Ptr(), User::Panic(KSpecAssert_ElemNodeMessMesC, 1));
+	// NeoSymbian: the check below calls through the node's vtable, so a node freed and reused faulted on a NULL
+	// vptr (ESock_DIP, KERN-EXEC 3, phone reboot) instead of naming the message. Name it, then the same panic.
+	const TUint* node = static_cast<const TUint*>(nodeId.Ptr());
+	if (!node[0] || (node[0] & 3))
+		{
+		const TNodeId* from = address_cast<TNodeId>(&aSender);
+		const TUint* fromNode = from ? static_cast<const TUint*>(from->Ptr()) : NULL;
+		RDebug::Printf("NodeMessages: dead node %08x (salt %d, thread %d) gets message %d:%d from %08x (vptr %08x, "
+			"thread %d); node words %08x %08x %08x %08x", node, nodeId.Salt(), nodeId.Thread(), MessageId().Realm(),
+			MessageId().MessageId(), fromNode, fromNode ? fromNode[0] : 0, aSender.Thread(), node[0], node[1], node[2],
+			node[3]);
+		User::Panic(KMessagesPanic, EDeceasedNodePanic);
+		}
 	__ASSERT_ALWAYS(nodeId.Node().NodeId() == nodeId, User::Panic(KMessagesPanic, EDeceasedNodePanic)); //Address reuse protection (Ptr() may match something existing, but not necesserily the intended addresee).
 	nodeId.Node().ReceivedL(aSender, nodeId, *this);
 	}
